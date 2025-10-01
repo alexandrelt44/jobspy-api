@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  jobspy-api:
+    build: .
+    container_name: jobspy-api
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app
+      - TZ=UTC
+      - VIRTUAL_HOST=jobspy.alexandreleite.pro
+      - VIRTUAL_PORT=8000
+      - LETSENCRYPT_HOST=jobspy.alexandreleite.pro
+      - LETSENCRYPT_EMAIL=alexandre@desenro.la
+      - HTTPS_METHOD=noredirect
+      - HTTP_FORWARDED_COUNT=1
+    volumes:
+      # Mount logs directory if needed
+      - ./logs:/app/logs
+    networks:
+      - mup-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  mup-network:
+    external: true
+
+volumes:
+  logs:
+    driver: local
