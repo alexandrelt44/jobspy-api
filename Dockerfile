@@ -29,8 +29,8 @@ WORKDIR /app
 # Install Poetry
 RUN pip install poetry
 
-# Copy Poetry files
-COPY pyproject.toml poetry.lock ./
+# Copy all application code (needed for poetry to install the project)
+COPY . .
 
 # Configure Poetry: Don't create virtual environment, install dependencies
 RUN poetry config virtualenvs.create false \
@@ -40,9 +40,6 @@ RUN poetry config virtualenvs.create false \
 # Install playwright browsers
 RUN playwright install chromium
 RUN playwright install-deps
-
-# Copy application code
-COPY . .
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app \
