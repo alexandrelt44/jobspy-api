@@ -119,7 +119,7 @@ class LinkedIn(Scraper):
                 response = self.session.get(
                     f"{self.base_url}/jobs-guest/jobs/api/seeMoreJobPostings/search?",
                     params=params,
-                    timeout=10,
+                    timeout=30,  # Increased for proxy SSL handshake
                 )
                 if response.status_code not in range(200, 400):
                     if response.status_code == 429:
@@ -250,7 +250,7 @@ class LinkedIn(Scraper):
         """
         try:
             response = self.session.get(
-                f"{self.base_url}/jobs/view/{job_id}", timeout=5
+                f"{self.base_url}/jobs/view/{job_id}", timeout=30  # Increased for proxy SSL handshake
             )
             response.raise_for_status()
         except:

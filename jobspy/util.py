@@ -154,7 +154,87 @@ def set_logger_level(verbose: int):
 def markdown_converter(description_html: str):
     if description_html is None:
         return None
+    
+    # Pre-process HTML to fix LinkedIn's white-space-pre span issues
+    # Replace white-space-pre spans with regular spaces
+    description_html = re.sub(r'<span[^>]*class="white-space-pre"[^>]*>\s*</span>', ' ', description_html)
+    
+    # Remove HTML comments that LinkedIn adds
+    description_html = re.sub(r'<!--.*?-->', '', description_html, flags=re.DOTALL)
+    
+    # Fix <br/><br/> tags inside <strong> elements - move them outside
+    # Pattern: <strong>text <br/><br/></strong> -> <strong>text</strong><br/><br/>
+    description_html = re.sub(r'(<strong[^>]*>[^<]*?)\s*<br/>\s*<br/>\s*(</strong>)', r'\1\2<br/><br/>', description_html)
+    description_html = re.sub(r'(<strong[^>]*>[^<]*?)\s*<br/>\s*(</strong>)', r'\1\2<br/>', description_html)
+    
+    # Fix other <br> patterns inside <strong> elements
+    description_html = re.sub(r'(<strong[^>]*>[^<]*?)<span><br></span>([^<]*?</strong>)', r'\1 \2', description_html)
+    description_html = re.sub(r'(<strong[^>]*>[^<]*?)<br>([^<]*?</strong>)', r'\1 \2', description_html)
+    
+    # Remove <br> tags at the end of <strong> elements entirely  
+    description_html = re.sub(r'(<strong[^>]*>[^<]*?)<span><br></span><span><br></span>(</strong>)', r'\1\2', description_html)
+    description_html = re.sub(r'(<strong[^>]*>[^<]*?)<br><br>(</strong>)', r'\1\2', description_html)
+    
+    # Convert to markdown
     markdown = md(description_html)
+    
+    # Fix bold text split across lines - merge lines that end/start with bold markers
+    # This handles cases like: "**word**\nmore text" or "text\n**word**"
+    markdown = re.sub(r'\*\*([^*\n]*)\*\*\n\s*([^\n*]+)', r'**\1** \2', markdown)
+    markdown = re.sub(r'([^\n*]+)\n\s*\*\*([^*\n]*)\*\*', r'\1 **\2**', markdown)
+    
+    # Fix broken bold formatting where line breaks appear inside bold markers
+    # Pattern: "word\n **text**" -> "word **text**"
+    markdown = re.sub(r'(\w+)\n\s+\*\*([^*]+)\*\*', r'\1 **\2**', markdown)
+    
+    # Fix pattern: "**text**\nis" -> "**text** is"
+    markdown = re.sub(r'\*\*([^*]+)\*\*\n(\w+)', r'**\1** \2', markdown)
+    
+    # Additional fix for bold followed by newline and text
+    # Pattern: "**text**\n\nword" -> "**text** word" (but preserve intentional paragraph breaks)
+    markdown = re.sub(r'\*\*([^*]+)\*\*\n([a-z])', r'**\1** \2', markdown)
+    
+    # Fix bold text immediately followed by text (missing space)
+    # Pattern: "**text**word" -> "**text** word"
+    markdown = re.sub(r'\*\*([^*]+)\*\*([A-Z][a-z])', r'**\1** \2', markdown)
+    
+    # Fix multiple consecutive bold elements (missing space/newline)
+    # Pattern: "**text1****text2**" -> "**text1**\n\n**text2**"  
+    markdown = re.sub(r'\*\*([^*]+)\*\*\*\*([^*]+)\*\*', r'**\1**\n\n**\2**', markdown)
+    
+    # Fix extra spaces inside bold markers (but not spaces outside)
+    # Only fix cases where there are spaces immediately inside the ** markers
+    # Pattern: "** text**" -> "**text**" (leading space inside - only when at start of line/after whitespace)
+    markdown = re.sub(r'(^|\s)\*\* ([^*]+)\*\*', r'\1**\2**', markdown)
+    # Pattern: "**text **" -> "**text**" (trailing space inside - only when followed by end/whitespace)  
+    markdown = re.sub(r'\*\*([^*]+) \*\*(\s|$)', r'**\1**\2', markdown)
+    
+    # Fix consecutive bold with excessive spacing
+    # Pattern: "**text.**   **text**" -> "**text.**\n\n**text**"
+    markdown = re.sub(r'\*\*([^*]+)\*\*\s{2,}\*\*([^*]+)\*\*', r'**\1**\n\n**\2**', markdown)
+    
+    # Fix multiple consecutive newlines (more than 2)
+    markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+    
+    # Remove leading/trailing whitespace from each line but preserve line structure
+    lines = markdown.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Keep empty lines as is (for paragraph breaks)
+        if line.strip() == '':
+            cleaned_lines.append('')
+        else:
+            # For non-empty lines, strip trailing spaces but keep leading spaces for lists
+            if line.lstrip().startswith('*') or line.lstrip().startswith('-') or line.lstrip().startswith('+'):
+                # For list items, preserve the list marker and spacing
+                cleaned_lines.append(line.rstrip())
+            else:
+                # For regular lines, strip both sides
+                cleaned_lines.append(line.strip())
+    
+    markdown = '\n'.join(cleaned_lines)
+    
+    # Final cleanup: remove trailing whitespace from the entire string
     return markdown.strip()
 
 def plain_converter(decription_html:str):
