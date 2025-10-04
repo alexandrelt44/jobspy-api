@@ -15,7 +15,9 @@ from .models import (
     JobSearchRequest, 
     JobSearchResponse, 
     ErrorResponse, 
-    HealthResponse
+    HealthResponse,
+    LinkedInBulkDescriptionRequest,
+    LinkedInBulkDescriptionResponse
 )
 from .services import JobSearchService
 from .utils import get_version, cleanup_csv_file
@@ -319,6 +321,39 @@ async def search_jobs_csv(
         )
 
 
+@app.post("/api/jobs/linkedin/descriptions", response_model=LinkedInBulkDescriptionResponse)
+async def fetch_linkedin_descriptions(request: LinkedInBulkDescriptionRequest):
+    """
+    Fetch job descriptions for multiple LinkedIn job URLs
+    
+    This endpoint efficiently fetches detailed job descriptions for multiple LinkedIn 
+    job postings. It's designed for incremental updates where you already have job URLs
+    and only need to fetch descriptions for new/unseen positions.
+    
+    Use cases:
+    - Fetch descriptions for new jobs found in search results
+    - Update descriptions for existing jobs
+    - Batch processing of LinkedIn job URLs
+    
+    The endpoint supports both full LinkedIn URLs (https://linkedin.com/jobs/view/JOBID)
+    and just job IDs (JOBID as a string).
+    """
+    try:
+        # Execute bulk description fetching
+        response = JobSearchService.fetch_linkedin_descriptions(request)
+        return response
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Internal Server Error",
+                "message": str(e)
+            }
+        )
+
+
 @app.get("/api/jobs/sites")
 async def get_supported_sites():
     """
@@ -335,7 +370,8 @@ async def get_supported_sites():
         "linkedin": {
             "name": "LinkedIn",
             "description": "Professional networking platform with job listings",
-            "supports_description_fetch": True
+            "supports_description_fetch": True,
+            "supports_bulk_description_fetch": True
         },
         "glassdoor": {
             "name": "Glassdoor", 

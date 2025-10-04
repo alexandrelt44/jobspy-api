@@ -7,7 +7,10 @@ import re
 from typing import Dict, Any, List
 import pandas as pd
 from jobspy import scrape_jobs
-from .models import JobSearchRequest, JobListing, JobSearchStats, JobSearchResponse
+from .models import (
+    JobSearchRequest, JobListing, JobSearchStats, JobSearchResponse,
+    LinkedInBulkDescriptionRequest, LinkedInJobDescription, LinkedInBulkDescriptionResponse
+)
 
 
 class JobSearchService:
@@ -281,3 +284,181 @@ class JobSearchService:
         jobs_df.to_csv(filename, quoting=1, escapechar="\\", index=False)  # quoting=1 is csv.QUOTE_NONNUMERIC
         
         return filename
+    
+    @staticmethod
+    def fetch_linkedin_descriptions(request: LinkedInBulkDescriptionRequest) -> LinkedInBulkDescriptionResponse:
+        """
+        Fetch job descriptions for multiple LinkedIn job URLs
+        
+        Args:
+            request: LinkedInBulkDescriptionRequest with job URLs and options
+            
+        Returns:
+            LinkedInBulkDescriptionResponse with results and metadata
+        """
+        import re
+        from jobspy.linkedin import LinkedIn
+        from jobspy.model import DescriptionFormat, ScraperInput
+        
+        results = []
+        successful_count = 0
+        failed_count = 0
+        
+        # Determine which proxies to use
+        proxies_to_use = None
+        if request.use_proxies:
+            # Use automatic proxy rotation with default Decodo proxies
+            try:
+                from .proxy_config import ProxyManager
+                proxy_manager = ProxyManager()
+                proxies_to_use = proxy_manager.get_proxies_for_site("linkedin")
+                print(f"Using {len(proxies_to_use)} proxies for LinkedIn description fetching")
+            except Exception as e:
+                print(f"Failed to load proxy manager: {e}. Proceeding without proxies.")
+                proxies_to_use = None
+        elif request.proxies:
+            # Use manually provided proxies
+            proxies_to_use = request.proxies
+            print(f"Using {len(proxies_to_use)} manually provided proxies")
+        
+        # Initialize LinkedIn scraper
+        try:
+            linkedin_scraper = LinkedIn(
+                proxies=proxies_to_use,
+                ca_cert=request.ca_cert
+            )
+            
+            # Set up scraper input for description format
+            scraper_input = ScraperInput(
+                search_term="dummy",  # Not used for direct description fetching
+                site_name="linkedin",
+                results_wanted=1,
+                description_format=DescriptionFormat.from_string(request.description_format)
+            )
+            linkedin_scraper.scraper_input = scraper_input
+            
+        except Exception as e:
+            # If we can't initialize the scraper, return all as failed
+            error_msg = f"Failed to initialize LinkedIn scraper: {str(e)}"
+            results = [
+                LinkedInJobDescription(
+                    job_url=url,
+                    job_id=JobSearchService._extract_job_id_from_url(url),
+                    success=False,
+                    error=error_msg
+                )
+                for url in request.job_urls
+            ]
+            return LinkedInBulkDescriptionResponse(
+                success=False,
+                message=f"Failed to initialize scraper: {str(e)}",
+                total_requested=len(request.job_urls),
+                total_successful=0,
+                total_failed=len(request.job_urls),
+                results=results,
+                request_parameters=request
+            )
+        
+        # Process each URL
+        for url in request.job_urls:
+            try:
+                job_id = JobSearchService._extract_job_id_from_url(url)
+                
+                if request.verbose >= 1:
+                    print(f"Fetching description for LinkedIn job ID: {job_id}")
+                
+                # Use the LinkedIn scraper's internal method to get job details
+                job_details = linkedin_scraper._get_job_details(job_id)
+                
+                if job_details and job_details.get('description'):
+                    # Sanitize description if it's markdown
+                    description = job_details.get('description')
+                    if description and '**' in description:
+                        description = JobSearchService.sanitize_markdown_description(description)
+                        job_details['description'] = description
+                    
+                    result = LinkedInJobDescription(
+                        job_url=url,
+                        job_id=job_id,
+                        success=True,
+                        title=job_details.get('title'),
+                        company_name=job_details.get('company_name'),
+                        company_url=job_details.get('company_url'),
+                        company_logo=job_details.get('company_logo'),
+                        location=job_details.get('location'),
+                        job_type=job_details.get('job_type'),
+                        job_level=job_details.get('job_level'),
+                        job_function=job_details.get('job_function'),
+                        company_industry=job_details.get('company_industry'),
+                        description=description,
+                        job_url_direct=job_details.get('job_url_direct')
+                    )
+                    successful_count += 1
+                else:
+                    result = LinkedInJobDescription(
+                        job_url=url,
+                        job_id=job_id,
+                        success=False,
+                        error="No description found or job may be expired/private"
+                    )
+                    failed_count += 1
+                    
+            except Exception as e:
+                error_msg = f"Failed to fetch description: {str(e)}"
+                if request.verbose >= 1:
+                    print(f"Error fetching job {job_id}: {error_msg}")
+                
+                result = LinkedInJobDescription(
+                    job_url=url,
+                    job_id=JobSearchService._extract_job_id_from_url(url),
+                    success=False,
+                    error=error_msg
+                )
+                failed_count += 1
+            
+            results.append(result)
+            
+            # Add small delay between requests to be respectful
+            if len(request.job_urls) > 1:
+                time.sleep(1)
+        
+        success_rate = successful_count / len(request.job_urls) * 100
+        message = f"Retrieved descriptions for {successful_count}/{len(request.job_urls)} jobs ({success_rate:.1f}% success rate)"
+        
+        return LinkedInBulkDescriptionResponse(
+            success=True,
+            message=message,
+            total_requested=len(request.job_urls),
+            total_successful=successful_count,
+            total_failed=failed_count,
+            results=results,
+            request_parameters=request
+        )
+    
+    @staticmethod
+    def _extract_job_id_from_url(url: str) -> str:
+        """
+        Extract LinkedIn job ID from URL or return as-is if it's already just an ID
+        
+        Args:
+            url: LinkedIn job URL or job ID
+            
+        Returns:
+            Job ID string
+        """
+        if url.isdigit():
+            return url
+        
+        # Extract job ID from LinkedIn URL
+        import re
+        match = re.search(r'/jobs/view/(\d+)', url)
+        if match:
+            return match.group(1)
+        
+        # If no match, try to extract any digits at the end
+        match = re.search(r'(\d+)/?$', url)
+        if match:
+            return match.group(1)
+        
+        # Fallback - just return the original URL (will likely fail)
+        return url

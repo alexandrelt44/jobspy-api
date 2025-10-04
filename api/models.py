@@ -4,6 +4,7 @@ Pydantic models for JobSpy API request and response validation
 
 from datetime import datetime
 from typing import List, Optional, Literal
+import re
 from pydantic import BaseModel, Field, validator
 
 
@@ -145,3 +146,94 @@ class HealthResponse(BaseModel):
     timestamp: datetime
     version: str
     uptime_seconds: float
+
+
+class LinkedInBulkDescriptionRequest(BaseModel):
+    """Request model for bulk LinkedIn job description fetching"""
+    
+    job_urls: List[str] = Field(
+        ...,
+        description="List of LinkedIn job URLs to fetch descriptions for",
+        min_items=1,
+        max_items=50  # Reasonable limit to prevent abuse
+    )
+    description_format: Literal["markdown", "html", "plain"] = Field(
+        default="markdown",
+        description="Format for job descriptions (markdown, html, plain)"
+    )
+    verbose: int = Field(
+        default=1,
+        ge=0,
+        le=2,
+        description="Verbosity level (0=quiet, 1=normal, 2=detailed)"
+    )
+    
+    # Proxy configuration options
+    use_proxies: bool = Field(
+        default=True,
+        description="Enable automatic proxy rotation using default proxy pool (recommended for LinkedIn)"
+    )
+    proxies: Optional[List[str]] = Field(
+        default=None,
+        description="Custom list of proxies in format 'user:pass@host:port' or 'host:port'"
+    )
+    ca_cert: Optional[str] = Field(
+        default=None,
+        description="Path to CA certificate file for proxy SSL verification"
+    )
+
+    @validator('job_urls')
+    def validate_linkedin_urls(cls, v):
+        linkedin_pattern = r'https://(?:www\.)?linkedin\.com/jobs/view/\d+'
+        for url in v:
+            # Extract job ID from URL - support both full URLs and just IDs
+            if url.isdigit():
+                # Just a job ID, convert to full URL
+                continue
+            elif re.match(linkedin_pattern, url):
+                # Full LinkedIn URL
+                continue
+            else:
+                raise ValueError(f"Invalid LinkedIn job URL: {url}. URLs must be in format 'https://linkedin.com/jobs/view/JOBID' or just the job ID")
+        return v
+
+    @validator('proxies')
+    def validate_proxies(cls, v):
+        if v is not None:
+            from .proxy_config import validate_proxy_format
+            for proxy in v:
+                if not validate_proxy_format(proxy):
+                    raise ValueError(f"Invalid proxy format: {proxy}. Use formats like 'user:pass@host:port' or 'host:port'")
+        return v
+
+
+class LinkedInJobDescription(BaseModel):
+    """Model for individual LinkedIn job description result"""
+    
+    job_url: str = Field(..., description="Original LinkedIn job URL")
+    job_id: str = Field(..., description="Extracted LinkedIn job ID")
+    success: bool = Field(..., description="Whether description fetching was successful")
+    title: Optional[str] = None
+    company_name: Optional[str] = None
+    company_url: Optional[str] = None
+    company_logo: Optional[str] = None
+    location: Optional[str] = None
+    job_type: Optional[str] = None
+    job_level: Optional[str] = None
+    job_function: Optional[str] = None
+    company_industry: Optional[str] = None
+    description: Optional[str] = None
+    job_url_direct: Optional[str] = None
+    error: Optional[str] = Field(None, description="Error message if fetching failed")
+
+
+class LinkedInBulkDescriptionResponse(BaseModel):
+    """Response model for bulk LinkedIn description fetching"""
+    
+    success: bool = True
+    message: str = "Job descriptions retrieved"
+    total_requested: int
+    total_successful: int
+    total_failed: int
+    results: List[LinkedInJobDescription]
+    request_parameters: LinkedInBulkDescriptionRequest
